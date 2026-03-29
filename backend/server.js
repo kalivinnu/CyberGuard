@@ -11,9 +11,9 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Initialize Gemini
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-// We will initialize the model dynamically in the function for fallbacks
+// Initialize Gemini with v1 API for broader model compatibility
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY); 
+// Note: We'll use the default or explicitly set v1 if needed in calls
 
 app.use(cors());
 app.use(express.json());
@@ -71,7 +71,8 @@ function parseDomainAge(whoisData) {
 }
 
 async function runAiAnalysis(data) {
-  const modelsToTry = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
+  // prioritize 2.0 series as 1.5 is being phased out in some regions
+  const modelsToTry = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-pro"];
   let lastError = null;
 
   for (const modelName of modelsToTry) {
@@ -80,7 +81,9 @@ async function runAiAnalysis(data) {
         throw new Error("GEMINI_API_KEY is missing.");
       }
 
+      // Explicitly try to hit the model
       const model = genAI.getGenerativeModel({ model: modelName });
+      
       const prompt = `
         As a Lead Cybersecurity Analyst, analyze the following website data for potential threats, phishing indicators, or technical vulnerabilities.
         
@@ -106,9 +109,8 @@ async function runAiAnalysis(data) {
     } catch (err) {
       console.error(`Attempt with ${modelName} failed:`, err.message);
       lastError = err;
-      // If it's an API Key error, don't bother trying other models
       if (err.message.includes("API key")) break;
-      continue; // Try next model
+      continue; 
     }
   }
 

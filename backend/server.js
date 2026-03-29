@@ -90,14 +90,23 @@ async function runAiAnalysis(data) {
   `;
 
   try {
+    if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === 'PLACEHOLDER') {
+      throw new Error("GEMINI_API_KEY is missing in environment variables.");
+    }
     const result = await model.generateContent(prompt);
     const text = result.response.text();
     // Clean JSON if Gemini adds markdown blocks
     const jsonStr = text.replace(/```json|```/g, "").trim();
     return JSON.parse(jsonStr);
   } catch (err) {
-    console.error("Gemini Analysis Error:", err);
-    return { verdict: "Unknown", insight: "Neural analysis bypassed due to high-traffic or API constraints." };
+    console.error("--- Gemini Neural Analysis Error ---");
+    console.error(err.message);
+    return { 
+      verdict: "Unknown", 
+      insight: err.message.includes("API key") 
+        ? "Neural analysis unavailable: Invalid or missing API key in production settings." 
+        : "Neural analysis temporarily bypassed due to network constraints." 
+    };
   }
 }
 

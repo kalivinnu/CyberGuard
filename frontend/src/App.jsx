@@ -15,6 +15,8 @@ function App() {
     try {
       // Fetch analysis data from our new backend
       const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+      console.log(`[CyberGuard] Targeting API: ${baseUrl}`);
+      
       const response = await fetch(`${baseUrl}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 5000;
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+// We will initialize the model dynamically in the function for fallbacks
 
 app.use(cors());
 app.use(express.json());
@@ -71,41 +71,51 @@ function parseDomainAge(whoisData) {
 }
 
 async function runAiAnalysis(data) {
-  const prompt = `
-    As a Lead Cybersecurity Analyst, analyze the following website data for potential threats, phishing indicators, or technical vulnerabilities.
-    
-    URL: ${data.url}
-    SSL Valid: ${data.isSslValid}
-    SSL Issuer: ${data.sslIssuer}
-    Missing Security Headers: ${data.hasMissingHeaders} (HSTS, CSP, X-Frame-Options)
-    Domain Age: ${data.domainAge}
-    HTTP Status Code: ${data.statusCode}
-    Server Location: ${data.serverLocation}
-    
-    Provide your analysis in JSON format with exactly two fields:
-    1. "verdict": One of ["Safe", "Suspicious", "Malicious"]
-    2. "insight": A concise, highly professional 2-sentence explanation of your finding.
-    
-    Return ONLY the JSON.
-  `;
+  const modelsToTry = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
+  let lastError = null;
 
-  try {
-    if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === 'PLACEHOLDER') {
-      throw new Error("GEMINI_API_KEY is missing in environment variables.");
+  for (const modelName of modelsToTry) {
+    try {
+      if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === 'PLACEHOLDER') {
+        throw new Error("GEMINI_API_KEY is missing.");
+      }
+
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const prompt = `
+        As a Lead Cybersecurity Analyst, analyze the following website data for potential threats, phishing indicators, or technical vulnerabilities.
+        
+        URL: ${data.url}
+        SSL Valid: ${data.isSslValid}
+        SSL Issuer: ${data.sslIssuer}
+        Missing Security Headers: ${data.hasMissingHeaders} (HSTS, CSP, X-Frame-Options)
+        Domain Age: ${data.domainAge}
+        HTTP Status Code: ${data.statusCode}
+        Server Location: ${data.serverLocation}
+        
+        Provide your analysis in JSON format with exactly two fields:
+        1. "verdict": One of ["Safe", "Suspicious", "Malicious"]
+        2. "insight": A concise, highly professional 2-sentence explanation of your finding.
+        
+        Return ONLY the JSON.
+      `;
+
+      const result = await model.generateContent(prompt);
+      const text = result.response.text();
+      const jsonStr = text.replace(/```json|```/g, "").trim();
+      return JSON.parse(jsonStr);
+    } catch (err) {
+      console.error(`Attempt with ${modelName} failed:`, err.message);
+      lastError = err;
+      // If it's an API Key error, don't bother trying other models
+      if (err.message.includes("API key")) break;
+      continue; // Try next model
     }
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    // Clean JSON if Gemini adds markdown blocks
-    const jsonStr = text.replace(/```json|```/g, "").trim();
-    return JSON.parse(jsonStr);
-  } catch (err) {
-    console.error("--- Gemini Neural Analysis Error ---");
-    console.error(err);
-    return { 
-      verdict: "Unknown", 
-      insight: `Neural Analysis Error: ${err.message || 'Connection timed out'}`
-    };
   }
+
+  return { 
+    verdict: "Unknown", 
+    insight: `Neural Analysis Error: ${lastError?.message || 'Connection failed'} (Tried ${modelsToTry.join(", ")})`
+  };
 }
 
 app.post('/api/analyze', async (req, res) => {

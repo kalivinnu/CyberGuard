@@ -1,0 +1,72 @@
+:root {
+  --bg-dark: #050508;
+  --bg-card: rgba(12, 12, 18, 0.7);
+  --border-neon-green: #00ff66;
+  --border-neon-red: #ff3333;
+  --text-primary: #ffffff;
+  --text-secondary: #8b949e;
+  --accent-blue: #00f0ff;
+  --font-main: 'Inter', sans-serif;
+  --font-cyber: 'Orbitron', sans-serif;
+  --font-mono: 'Share Tech Mono', monospace;
+  
+  --glass-border: rgba(0, 255, 102, 0.15);
+  --glass-shadow: 0 8px 32px 0 rgba(0, 255, 102, 0.05);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-main);
+  background-color: var(--bg-dark);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+  background-image: 
+    radial-gradient(circle at 50% -20%, rgba(0, 255, 102, 0.1), transparent 50%),
+    linear-gradient(to bottom, transparent 0%, rgba(0, 240, 255, 0.03) 100%);
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-dark); 
+}
+::-webkit-scrollbar-thumb {
+  background: #1f2937; 
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-neon-green); 
+}
+
+/* Utility Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+  animation: fadeIn 0.6s ease-out forwards;
+}
+
+.glass-panel {
+  background: var(--bg-card);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  border-radius: 16px;
+}

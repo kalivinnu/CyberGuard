@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 5000;
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 app.use(cors());
 app.use(express.json());
@@ -100,12 +100,10 @@ async function runAiAnalysis(data) {
     return JSON.parse(jsonStr);
   } catch (err) {
     console.error("--- Gemini Neural Analysis Error ---");
-    console.error(err.message);
+    console.error(err);
     return { 
       verdict: "Unknown", 
-      insight: err.message.includes("API key") 
-        ? "Neural analysis unavailable: Invalid or missing API key in production settings." 
-        : "Neural analysis temporarily bypassed due to network constraints." 
+      insight: `Neural Analysis Error: ${err.message || 'Connection timed out'}`
     };
   }
 }

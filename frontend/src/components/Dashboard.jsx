@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ShieldCheck, ShieldAlert, Globe, Server, Lock, AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, Globe, Server, Lock, AlertTriangle, CheckCircle, XCircle, Cpu, Zap } from 'lucide-react';
 import '../styles/Dashboard.css';
 
 const Dashboard = ({ data, url, onReset }) => {
@@ -136,6 +136,24 @@ const Dashboard = ({ data, url, onReset }) => {
                   HTTP {data.serverInfo.statusCode}
                 </span>
               </div>
+            </div>
+          </div>
+
+          {/* AI Neural Analysis Metric */}
+          <div className="glass-panel metric-card ai-card">
+            <div className="metric-header">
+              <Cpu className="metric-icon ai-icon" size={20} />
+              Neural AI Verdict
+            </div>
+            <div className="metric-content">
+              <div className="ai-verdict-container">
+                <span className={`ai-verdict-tag ${data.aiAnalysis.verdict.toLowerCase()}`}>
+                  {data.aiAnalysis.verdict}
+                </span>
+              </div>
+              <p className="ai-insight-text">
+                {data.aiAnalysis.insight}
+              </p>
             </div>
           </div>
 

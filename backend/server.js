@@ -5,12 +5,37 @@ const dns = require('dns').promises;
 const { URL } = require('url');
 const whois = require('whois');
 const axios = require('axios');
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Initialize Gemini
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+
 app.use(cors());
 app.use(express.json());
+
+// Helper to extract the root domain for WHOIS
+function getBaseDomain(hostname) {
+  // If it's an IP, return as is
+  if (/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(hostname)) return hostname;
+  
+  const parts = hostname.split('.');
+  if (parts.length <= 2) return hostname;
+  
+  // Handle common multi-part TLDs (e.g., co.uk, com.br)
+  const lastTwo = parts.slice(-2).join('.');
+  const multiPartTLDs = ['co.uk', 'com.br', 'org.uk', 'net.in', 'gov.in'];
+  
+  if (multiPartTLDs.includes(lastTwo) && parts.length > 2) {
+    return parts.slice(-3).join('.');
+  }
+  
+  return parts.slice(-2).join('.');
+}
 
 // Promisify WHOIS lookup
 function lookupWhois(domain) {
@@ -43,6 +68,37 @@ function parseDomainAge(whoisData) {
     }
   }
   return { ageDays: 0, text: 'Unknown' };
+}
+
+async function runAiAnalysis(data) {
+  const prompt = `
+    As a Lead Cybersecurity Analyst, analyze the following website data for potential threats, phishing indicators, or technical vulnerabilities.
+    
+    URL: ${data.url}
+    SSL Valid: ${data.isSslValid}
+    SSL Issuer: ${data.sslIssuer}
+    Missing Security Headers: ${data.hasMissingHeaders} (HSTS, CSP, X-Frame-Options)
+    Domain Age: ${data.domainAge}
+    HTTP Status Code: ${data.statusCode}
+    Server Location: ${data.serverLocation}
+    
+    Provide your analysis in JSON format with exactly two fields:
+    1. "verdict": One of ["Safe", "Suspicious", "Malicious"]
+    2. "insight": A concise, highly professional 2-sentence explanation of your finding.
+    
+    Return ONLY the JSON.
+  `;
+
+  try {
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+    // Clean JSON if Gemini adds markdown blocks
+    const jsonStr = text.replace(/```json|```/g, "").trim();
+    return JSON.parse(jsonStr);
+  } catch (err) {
+    console.error("Gemini Analysis Error:", err);
+    return { verdict: "Unknown", insight: "Neural analysis bypassed due to high-traffic or API constraints." };
+  }
 }
 
 app.post('/api/analyze', async (req, res) => {
@@ -111,10 +167,15 @@ app.post('/api/analyze', async (req, res) => {
     if (hasCsp && hasXFrame && hasHsts) {
       hasMissingHeaders = false; // All present
     }
+  } catch (err) {
+    console.warn(`Connection logic bypassed for ${hostname}:`, err.message);
+    statusCode = 'Connection Failed';
+  }
 
-    // Inspect SSL Certificate if HTTPS using dedicated TLS connection for SNI accuracy
-    if (isHttps) {
-      const tls = require('tls');
+  // --- SSL Inspection (Native TLS) ---
+  if (isHttps) {
+    const tls = require('tls');
+    try {
       await new Promise((resolve) => {
         const socket = tls.connect({
           host: hostname,
@@ -129,32 +190,31 @@ app.post('/api/analyze', async (req, res) => {
             const validFrom = new Date(cert.valid_from);
             const now = new Date();
             
-            // Validate expiration internally
             if (now >= validFrom && now <= validTo) {
-               // Use Node's built-in hostname validation for wildcards (*.google.com)
                const identityErr = tls.checkServerIdentity(hostname, cert);
-               if (!identityErr) {
-                 isSslValid = true;
-               }
+               if (!identityErr) isSslValid = true;
             }
           }
           socket.end();
           resolve();
         });
-        
-        socket.on('error', () => {
-          resolve(); // Resolve on error so we don't hang
-        });
+        socket.on('error', () => resolve());
+        setTimeout(() => { socket.destroy(); resolve(); }, 5000); // 5s timeout
       });
+    } catch (err) {
+      console.warn(`SSL Socket Check Failed for ${hostname}`);
     }
-
-  } catch (err) {
-    console.error(`Error connecting to ${hostname}:`, err.message);
   }
 
   // --- C. WHOIS Domain Age ---
-  const baseDomain = hostname.split('.').slice(-2).join('.'); // very basic apex extraction
-  const whoisText = await lookupWhois(baseDomain);
+  const baseDomain = getBaseDomain(hostname);
+  const isIp = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(baseDomain);
+  
+  let whoisText = '';
+  if (!isIp) {
+    whoisText = await lookupWhois(baseDomain);
+  }
+  
   const domainAgeResult = parseDomainAge(whoisText);
   const isOldDomain = domainAgeResult.ageDays > 180; // 6 months
 
@@ -170,8 +230,9 @@ app.post('/api/analyze', async (req, res) => {
   if (isOldDomain) finalScore += 1;
   if (hasMissingHeaders) finalScore -= 1;
   if (isSuspiciousUrl) finalScore -= 1;
+  if (isIp) finalScore -= 1; // URLs that are raw IPs are suspicious
 
-  // Max score is +3, Min is -2. Convert this to a 0-100 gauge scale for the UI
+  // Max score is +3, Min is -2. Convert this to a 0-100 gauge scale
   // Mapping: -2=10, -1=30, 0=50, 1=70, 2=85, 3=100
   let normalizedScore = 50;
   if (finalScore >= 3) normalizedScore = 100;
@@ -184,6 +245,17 @@ app.post('/api/analyze', async (req, res) => {
   let threatLevel = 'Safe';
   if (normalizedScore < 50) threatLevel = 'Critical / High Risk';
   else if (normalizedScore < 80) threatLevel = 'Warning / Medium Risk';
+
+  // --- 4. NEURAL AI ANALYSIS ---
+  const aiResult = await runAiAnalysis({
+    url,
+    isSslValid,
+    sslIssuer,
+    hasMissingHeaders,
+    domainAge: domainAgeResult.text,
+    statusCode,
+    serverLocation
+  });
 
   // Format to original Dashboard structure
   setTimeout(() => {
@@ -210,9 +282,13 @@ app.post('/api/analyze', async (req, res) => {
         location: serverLocation || 'Unknown API Error',
         ip: serverIp,
         statusCode: statusCode
+      },
+      aiAnalysis: {
+        verdict: aiResult.verdict,
+        insight: aiResult.insight
       }
     });
-  }, 1000); // Wait 1s for IP Geolocation callback to definitely resolve since it wasn't awaited
+  }, 1000); // Wait 1s for IP Geolocation callback to definitely resolve
 });
 
 app.listen(PORT, () => {

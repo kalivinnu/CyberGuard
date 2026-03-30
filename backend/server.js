@@ -71,8 +71,8 @@ function parseDomainAge(whoisData) {
 }
 
 async function runAiAnalysis(data) {
-  // prioritize 2.0 series as 1.5 is being phased out in some regions
-  const modelsToTry = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-pro"];
+  // Verified working models for this environment:
+  const modelsToTry = ["gemini-3-flash-preview", "gemini-flash-latest"];
   let lastError = null;
 
   for (const modelName of modelsToTry) {
@@ -81,7 +81,6 @@ async function runAiAnalysis(data) {
         throw new Error("GEMINI_API_KEY is missing.");
       }
 
-      // Explicitly try to hit the model
       const model = genAI.getGenerativeModel({ model: modelName });
       
       const prompt = `
@@ -109,7 +108,8 @@ async function runAiAnalysis(data) {
     } catch (err) {
       console.error(`Attempt with ${modelName} failed:`, err.message);
       lastError = err;
-      if (err.message.includes("API key")) break;
+      // If quota or API key issue, stop trying other models
+      if (err.message.includes("API key") || err.message.includes("429")) break;
       continue; 
     }
   }

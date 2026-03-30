@@ -84,26 +84,37 @@ async function runAiAnalysis(data) {
       const model = genAI.getGenerativeModel({ model: modelName });
       
       const prompt = `
-        As a Lead Cybersecurity Analyst, analyze the following website data for potential threats, phishing indicators, or technical vulnerabilities.
+        As a Lead Cybersecurity Analyst, analyze the following website data for potential PHISHING, SCAMS, or technical vulnerabilities.
         
         URL: ${data.url}
         SSL Valid: ${data.isSslValid}
         SSL Issuer: ${data.sslIssuer}
-        Missing Security Headers: ${data.hasMissingHeaders} (HSTS, CSP, X-Frame-Options)
+        Missing Security Headers: ${data.hasMissingHeaders}
         Domain Age: ${data.domainAge}
         HTTP Status Code: ${data.statusCode}
         Server Location: ${data.serverLocation}
         
+        PHISHING HEURISTICS:
+        - Is Punycode/Homograph: ${data.phishingIndicators.isPunycode}
+        - Suspicious TLD: ${data.phishingIndicators.hasSuspiciousTld}
+        - Deep Subdomains: ${data.phishingIndicators.hasDeepSubdomains}
+        - Suspicious Keywords: ${data.phishingIndicators.isSuspiciousUrl}
+
+        Analyze the URL structure for deceptive patterns (e.g., brand impersonation, deceptive subdomains, or social engineering keywords).
+        
         Provide your analysis in JSON format with exactly two fields:
         1. "verdict": One of ["Safe", "Suspicious", "Malicious"]
-        2. "insight": A concise, highly professional 2-sentence explanation of your finding.
+        2. "insight": A concise, highly professional 2-sentence explanation focusing on why it was flagged (or why it is safe).
         
         Return ONLY the JSON.
       `;
 
       const result = await model.generateContent(prompt);
       const text = result.response.text();
-      const jsonStr = text.replace(/```json|```/g, "").trim();
+      // More robust JSON extraction: Find content between first { and last }
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error("No JSON object found in AI response");
+      const jsonStr = match[0].trim();
       return JSON.parse(jsonStr);
     } catch (err) {
       console.error(`Attempt with ${modelName} failed:`, err.message);
@@ -146,9 +157,20 @@ app.post('/api/analyze', async (req, res) => {
   let serverIp = 'Unknown';
   let serverLocation = 'Unknown';
 
-  // --- F. Suspicious Keyword Detection ---
-  const suspiciousKeywords = ['login', 'free', 'verify', 'bank', 'update', 'secure', 'account', '.xyz', '.top'];
+  // --- F. Suspicious Keyword Detection & Phishing Heuristics ---
+  const suspiciousKeywords = ['login', 'free', 'verify', 'bank', 'update', 'secure', 'account', 'signin', 'auth', 'payment', 'confirm'];
   const isSuspiciousUrl = suspiciousKeywords.some(keyword => url.toLowerCase().includes(keyword));
+  
+  // Punycode/Homograph Detection
+  const isPunycode = hostname.toLowerCase().startsWith('xn--');
+  
+  // High-risk TLDs
+  const suspiciousTlds = ['.xyz', '.top', '.site', '.online', '.tk', '.ga', '.cf', '.gq', '.zip', '.click'];
+  const hasSuspiciousTld = suspiciousTlds.some(tld => hostname.toLowerCase().endsWith(tld));
+  
+  // Subdomain profiling
+  const subdomains = hostname.split('.');
+  const hasDeepSubdomains = subdomains.length > 3;
 
   try {
     // --- Server Fingerprint (DNS & IP-API Geolocation) ---
@@ -250,20 +272,24 @@ app.post('/api/analyze', async (req, res) => {
   if (hasMissingHeaders) finalScore -= 1;
   if (isSuspiciousUrl) finalScore -= 1;
   if (isIp) finalScore -= 1; // URLs that are raw IPs are suspicious
+  if (isPunycode) finalScore -= 2; // Homograph attack is critical
+  if (hasSuspiciousTld) finalScore -= 1; 
 
-  // Max score is +3, Min is -2. Convert this to a 0-100 gauge scale
-  // Mapping: -2=10, -1=30, 0=50, 1=70, 2=85, 3=100
+  // Max score is +3, Min is -5. Convert this to a 0-100 gauge scale
+  // Mapping: -5=0, -3=10, -2=20, -1=30, 0=50, 1=70, 2=85, 3=100
   let normalizedScore = 50;
   if (finalScore >= 3) normalizedScore = 100;
   else if (finalScore === 2) normalizedScore = 85;
   else if (finalScore === 1) normalizedScore = 70;
   else if (finalScore === 0) normalizedScore = 50;
   else if (finalScore === -1) normalizedScore = 30;
-  else normalizedScore = 10;
+  else if (finalScore === -2) normalizedScore = 20;
+  else if (finalScore === -3) normalizedScore = 10;
+  else normalizedScore = 5;
 
   let threatLevel = 'Safe';
-  if (normalizedScore < 50) threatLevel = 'Critical / High Risk';
-  else if (normalizedScore < 80) threatLevel = 'Warning / Medium Risk';
+  if (normalizedScore < 40) threatLevel = 'Critical / High Risk (Phishing Suspected)';
+  else if (normalizedScore < 75) threatLevel = 'Warning / Medium Risk';
 
   // --- 4. NEURAL AI ANALYSIS ---
   const aiResult = await runAiAnalysis({
@@ -273,7 +299,13 @@ app.post('/api/analyze', async (req, res) => {
     hasMissingHeaders,
     domainAge: domainAgeResult.text,
     statusCode,
-    serverLocation
+    serverLocation,
+    phishingIndicators: {
+        isPunycode,
+        hasSuspiciousTld,
+        hasDeepSubdomains,
+        isSuspiciousUrl
+    }
   });
 
   // Format to original Dashboard structure
@@ -289,12 +321,13 @@ app.post('/api/analyze', async (req, res) => {
       domain: {
         age: domainAgeResult.text + (isOldDomain ? ' 🟢' : ' ⚠️ (<6m)'),
         registrar: 'Realtime WHOIS Query',
-        reputation: isSuspiciousUrl ? 'Suspicious' : 'Good'
+        reputation: (isSuspiciousUrl || isPunycode || hasSuspiciousTld) ? 'Deceptive' : 'Good'
       },
       threats: [
         { name: 'Missing HSTS/CSP Headers', detected: hasMissingHeaders },
         { name: 'Suspicious URL Keywords', detected: isSuspiciousUrl },
-        { name: 'Missing Secure Protocol (HTTPS)', detected: !isHttps },
+        { name: 'Punycode/Homograph Attack', detected: isPunycode },
+        { name: 'Untrusted/High-Risk TLD', detected: hasSuspiciousTld },
         { name: 'Invalid SSL Certificate', detected: !isSslValid }
       ],
       serverInfo: {
@@ -307,7 +340,7 @@ app.post('/api/analyze', async (req, res) => {
         insight: aiResult.insight
       }
     });
-  }, 1000); // Wait 1s for IP Geolocation callback to definitely resolve
+  }, 1000); 
 });
 
 app.listen(PORT, () => {

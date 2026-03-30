@@ -108,7 +108,7 @@ const Dashboard = ({ data, url, onReset }) => {
               </div>
               <div className="metric-item">
                 <span className="item-label">Reputation</span>
-                <span className={`item-value ${data.domain.reputation === 'Good' ? 'secure' : 'warning'}`}>
+                <span className={`item-value ${data.domain.reputation === 'Good' ? 'secure' : data.domain.reputation === 'Deceptive' ? 'critical' : 'warning'}`}>
                   {data.domain.reputation}
                 </span>
               </div>

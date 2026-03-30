@@ -63,18 +63,26 @@ function App() {
         {phase === 'dashboard' && <Dashboard data={analysisData} url={targetUrl} onReset={resetScanner} />}
       </main>
 
+      <footer className="app-footer">
+        <p>&copy; {new Date().getFullYear()} All Rights Reserved | Developed by Vinay M Bevinamarad</p>
+      </footer>
+
       <style>{`
         .app-container {
           min-height: 100vh;
           display: flex;
           flex-direction: column;
+          background-color: var(--bg-dark);
         }
         .app-header {
-          padding: 2rem 5%;
+          padding: 1.5rem 5%;
           display: flex;
           justify-content: space-between;
           align-items: center;
           border-bottom: 1px solid rgba(255,255,255,0.05);
+          background: rgba(10, 11, 14, 0.8);
+          backdrop-filter: blur(10px);
+          z-index: 10;
         }
         .logo-container {
           display: flex;
@@ -113,6 +121,19 @@ function App() {
           justify-content: center;
           padding: 2rem 5%;
           position: relative;
+        }
+        .app-footer {
+          padding: 1.5rem 5%;
+          text-align: center;
+          border-top: 1px solid rgba(255,255,255,0.05);
+          background: rgba(10, 11, 14, 0.5);
+        }
+        .app-footer p {
+          color: rgba(255, 255, 255, 0.4);
+          font-size: 0.85rem;
+          font-family: var(--font-cyber);
+          letter-spacing: 1px;
+          text-transform: uppercase;
         }
       `}</style>
     </div>

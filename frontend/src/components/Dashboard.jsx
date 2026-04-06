@@ -166,14 +166,28 @@ const Dashboard = ({ data, url, onReset }) => {
             <div className="threats-grid">
               {data.threats.map((threat, idx) => (
                 <div key={idx} className={`threat-item ${threat.detected ? 'detected' : ''}`}>
-                  {threat.detected ? (
-                    <AlertTriangle size={18} color="var(--border-neon-red)" />
-                  ) : (
-                    <CheckCircle size={18} color="var(--border-neon-green)" />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {threat.detected ? (
+                      <AlertTriangle size={18} color="var(--border-neon-red)" />
+                    ) : (
+                      <CheckCircle size={18} color="var(--border-neon-green)" />
+                    )}
+                    <span style={{ fontSize: '0.9rem', fontWeight: '600', color: threat.detected ? '#ff3333' : 'var(--text-secondary)'}}>
+                      {threat.name}
+                    </span>
+                  </div>
+                  {threat.explanation && (
+                    <p style={{ 
+                      fontSize: '0.75rem', 
+                      color: 'var(--text-secondary)', 
+                      marginTop: '4px', 
+                      paddingLeft: '28px',
+                      lineHeight: '1.4',
+                      opacity: 0.8
+                    }}>
+                      {threat.explanation}
+                    </p>
                   )}
-                  <span style={{ fontSize: '0.9rem', color: threat.detected ? '#ff3333' : 'var(--text-secondary)'}}>
-                    {threat.name}
-                  </span>
                 </div>
               ))}
             </div>

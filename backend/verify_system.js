@@ -4,7 +4,8 @@ const testUrls = [
   'google.com',
   '1.1.1.1',
   'https://www.bbc.co.uk',
-  'phish-login-verify-bank.com',
+  'xn--80ak6aa92e.com',
+  'login-secure-auth.xyz',
   'not-a-link'
 ];
 

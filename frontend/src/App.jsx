@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import ScannerInput from './components/ScannerInput'
 import ScanningConsole from './components/ScanningConsole'
 import Dashboard from './components/Dashboard'
@@ -7,6 +7,17 @@ function App() {
   const [phase, setPhase] = useState('input'); // 'input', 'scanning', 'dashboard'
   const [targetUrl, setTargetUrl] = useState('');
   const [analysisData, setAnalysisData] = useState(null);
+
+  // Dynamic background glow effect
+  useEffect(() => {
+    if (phase === 'dashboard' && analysisData) {
+      if (analysisData.score >= 80) document.body.className = 'risk-safe';
+      else if (analysisData.score >= 45) document.body.className = 'risk-warning';
+      else document.body.className = 'risk-critical';
+    } else {
+      document.body.className = '';
+    }
+  }, [phase, analysisData]);
 
   const startScan = async (url) => {
     setTargetUrl(url);

@@ -6,10 +6,22 @@ const { URL } = require('url');
 const whois = require('whois');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const ipaddr = require('ipaddr.js');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// Security Middleware
+app.use(helmet());
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per window
+  message: { error: 'Too many security scans from this IP, please try again later.' }
+});
+app.use('/api/', limiter);
 
 // Initialize Gemini with v1 API for broader model compatibility
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY); 
@@ -86,6 +98,8 @@ async function runAiAnalysis(data) {
       const prompt = `
         As a Lead Cybersecurity Analyst, analyze the following website data for potential PHISHING, SCAMS, or technical vulnerabilities.
         
+        TECHNICAL TRUST SCORE: ${data.trustScore}% (A lower score indicates higher risk based on rule-based analysis)
+        
         URL: ${data.url}
         SSL Valid: ${data.isSslValid}
         SSL Issuer: ${data.sslIssuer}
@@ -96,11 +110,12 @@ async function runAiAnalysis(data) {
         
         PHISHING HEURISTICS:
         - Is Punycode/Homograph: ${data.phishingIndicators.isPunycode}
+        - Shortened Link Detected: ${data.phishingIndicators.isShortened}
         - Suspicious TLD: ${data.phishingIndicators.hasSuspiciousTld}
         - Deep Subdomains: ${data.phishingIndicators.hasDeepSubdomains}
         - Suspicious Keywords: ${data.phishingIndicators.isSuspiciousUrl}
 
-        Analyze the URL structure for deceptive patterns (e.g., brand impersonation, deceptive subdomains, or social engineering keywords).
+        Analyze the URL structure and technical indicators for deceptive patterns. You must provide a verdict that is consistent with the Technical Trust Score unless you have a strong, justifiable reason for a different conclusion.
         
         Provide your analysis in JSON format with exactly two fields:
         1. "verdict": One of ["Safe", "Suspicious", "Malicious"]
@@ -157,9 +172,13 @@ app.post('/api/analyze', async (req, res) => {
   let serverIp = 'Unknown';
   let serverLocation = 'Unknown';
 
-  // --- F. Suspicious Keyword Detection & Phishing Heuristics ---
-  const suspiciousKeywords = ['login', 'free', 'verify', 'bank', 'update', 'secure', 'account', 'signin', 'auth', 'payment', 'confirm'];
+  // --- F. Suspicious Keyword & Shortener Detection & Phishing Heuristics ---
+  const suspiciousKeywords = ['login', 'free', 'verify', 'bank', 'update', 'secure', 'account', 'signin', 'auth', 'payment', 'confirm', 'password', 'urgent', 'offer', 'redirect'];
   const isSuspiciousUrl = suspiciousKeywords.some(keyword => url.toLowerCase().includes(keyword));
+  
+  // Shortener Detection
+  const shorteners = ['bit.ly', 'tinyurl.com', 't.co', 'goo.gl', 'shorturl.at', 'is.gd', 'buff.ly', 'ow.ly'];
+  const isShortened = shorteners.some(shortener => hostname.toLowerCase() === shortener || hostname.toLowerCase().endsWith('.' + shortener));
   
   // Punycode/Homograph Detection
   const isPunycode = hostname.toLowerCase().startsWith('xn--');
@@ -173,9 +192,19 @@ app.post('/api/analyze', async (req, res) => {
   const hasDeepSubdomains = subdomains.length > 3;
 
   try {
-    // --- Server Fingerprint (DNS & IP-API Geolocation) ---
+    // --- SSRF PROTECTION ---
+    // Validate that the IP is NOT private, reserved, or loopback
     const dnsResult = await dns.lookup(hostname);
     serverIp = dnsResult.address;
+    
+    const addr = ipaddr.parse(serverIp);
+    const range = addr.range();
+    const untrustedRanges = ['loopback', 'linkLocal', 'private', 'uniqueLocal', 'reserved'];
+    
+    if (untrustedRanges.includes(range)) {
+      console.warn(`[Blocked SSRF Attempt]: Target ${hostname} resolved to ${range} IP ${serverIp}`);
+      return res.status(403).json({ error: 'Access Denied: Scanning internal/private network resources is prohibited.' });
+    }
     
     // Non-blocking fetch for geolocation
     axios.get(`http://ip-api.com/json/${serverIp}`).then(geo => {
@@ -272,6 +301,7 @@ app.post('/api/analyze', async (req, res) => {
   if (hasMissingHeaders) finalScore -= 1;
   if (isSuspiciousUrl) finalScore -= 1;
   if (isIp) finalScore -= 1; // URLs that are raw IPs are suspicious
+  if (isShortened) finalScore -= 1; // Shortened URLs mask destination
   if (isPunycode) finalScore -= 2; // Homograph attack is critical
   if (hasSuspiciousTld) finalScore -= 1; 
 
@@ -294,6 +324,7 @@ app.post('/api/analyze', async (req, res) => {
   // --- 4. NEURAL AI ANALYSIS ---
   const aiResult = await runAiAnalysis({
     url,
+    trustScore: normalizedScore,
     isSslValid,
     sslIssuer,
     hasMissingHeaders,
@@ -302,6 +333,7 @@ app.post('/api/analyze', async (req, res) => {
     serverLocation,
     phishingIndicators: {
         isPunycode,
+        isShortened,
         hasSuspiciousTld,
         hasDeepSubdomains,
         isSuspiciousUrl
@@ -324,11 +356,12 @@ app.post('/api/analyze', async (req, res) => {
         reputation: (isSuspiciousUrl || isPunycode || hasSuspiciousTld) ? 'Deceptive' : 'Good'
       },
       threats: [
-        { name: 'Missing HSTS/CSP Headers', detected: hasMissingHeaders },
-        { name: 'Suspicious URL Keywords', detected: isSuspiciousUrl },
-        { name: 'Punycode/Homograph Attack', detected: isPunycode },
-        { name: 'Untrusted/High-Risk TLD', detected: hasSuspiciousTld },
-        { name: 'Invalid SSL Certificate', detected: !isSslValid }
+        { name: 'Missing HSTS/CSP Headers', detected: hasMissingHeaders, explanation: 'HSTS/CSP - These are special security instructions that help protect your browser from attacks.' },
+        { name: 'Suspicious URL Keywords', detected: isSuspiciousUrl, explanation: 'Suspicious Words - The link uses terms often found in fake or scam websites (e.g., "bank", "free", "urgent").' },
+        { name: 'Shortened Link Detected', detected: isShortened, explanation: 'Shortened URL - The link is hidden behind a shortening service, making its true destination unknown.' },
+        { name: 'Punycode/Homograph Attack', detected: isPunycode, explanation: 'Lookalike Link - The web address uses special characters to "look like" a famous site while actually being fake.' },
+        { name: 'Untrusted/High-Risk TLD', detected: hasSuspiciousTld, explanation: 'Risk Domain Extension - The site uses a cheap or untrusted domain type (.xyz, .tk) often used by scammers.' },
+        { name: 'Invalid SSL Certificate', detected: !isSslValid, explanation: 'SSL Certificate - A valid certificate ensures your connection is encrypted and the site is who it says it is.' }
       ],
       serverInfo: {
         location: serverLocation || 'Unknown API Error',

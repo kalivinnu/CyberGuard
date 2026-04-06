@@ -34,7 +34,6 @@ const Dashboard = ({ data, url, onReset }) => {
   };
 
   const color = getColor(data.score);
-  const strokeDasharray = `${animatedScore}, 100`;
 
   return (
     <div className="dashboard-container fade-in">
@@ -63,32 +62,34 @@ const Dashboard = ({ data, url, onReset }) => {
         <button onClick={onReset} className="close-btn">NEW SCAN</button>
       </div>
 
-      <div className="dashboard-grid">
-        {/* Score Gauge */}
-        <div className="glass-panel score-card">
-          <h3>Trust Score</h3>
-          <svg viewBox="0 0 36 36" className="circular-chart">
-            <path className="circle-bg"
-              d="M18 2.0845
-                a 15.9155 15.9155 0 0 1 0 31.831
-                a 15.9155 15.9155 0 0 1 0 -31.831"
-            />
-            <path className="circle"
-              strokeDasharray={strokeDasharray}
-              style={{ stroke: color }}
-              d="M18 2.0845
-                a 15.9155 15.9155 0 0 1 0 31.831
-                a 15.9155 15.9155 0 0 1 0 -31.831"
-            />
-            <text x="18" y="20.35" className="percentage" style={{ fill: color }}>{animatedScore}</text>
-          </svg>
-          <div 
-            className="threat-badge" 
-            style={{ backgroundColor: getThreatBadgeBg(data.threatLevel), color: color, border: `1px solid ${color}` }}
-          >
-            {data.threatLevel}
+      {/* Rectangular Score Section */}
+      <div className="glass-panel score-card-horizontal">
+        <div className="score-info">
+          <span className="score-label">Trust Score</span>
+          <div className="score-value-container">
+            <h2 className="score-number" style={{ color: color }}>{animatedScore}</h2>
+            <span className="score-total">/ 100</span>
           </div>
         </div>
+        
+        <div className="progress-container">
+          <div className="progress-bar-bg">
+            <div 
+              className="progress-bar-fill" 
+              style={{ width: `${animatedScore}%`, backgroundColor: color, boxShadow: `0 0 15px ${color}` }}
+            ></div>
+          </div>
+        </div>
+
+        <div 
+          className="threat-badge-horizontal" 
+          style={{ backgroundColor: getThreatBadgeBg(data.threatLevel), color: color, border: `1px solid ${color}` }}
+        >
+          {data.threatLevel}
+        </div>
+      </div>
+
+      <div className="dashboard-grid-full">
 
         {/* Breakdown Metrics */}
         <div className="metrics-grid">

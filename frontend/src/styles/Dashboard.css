@@ -50,66 +50,90 @@
   gap: 1.5rem;
 }
 
-/* Score Card */
-.score-card {
+/* Horizontal Score Card */
+.score-card-horizontal {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  gap: 1.5rem;
   padding: 2rem;
-  text-align: center;
+  width: 100%;
 }
 
-.score-card h3 {
+.score-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+
+.score-label {
   font-family: var(--font-cyber);
   font-size: 1.2rem;
-  margin-bottom: 2rem;
-  letter-spacing: 1px;
-}
-
-/* Circular Progress */
-.circular-chart {
-  display: block;
-  margin: 0 auto;
-  max-width: 80%;
-  max-height: 250px;
-}
-
-.circle-bg {
-  fill: none;
-  stroke: rgba(255, 255, 255, 0.05);
-  stroke-width: 3.8;
-}
-
-.circle {
-  fill: none;
-  stroke-width: 2.8;
-  stroke-linecap: round;
-  transition: stroke-dasharray 1s ease-out;
-}
-
-.percentage {
-  fill: var(--text-primary);
-  font-family: var(--font-cyber);
-  font-size: 0.5em;
-  text-anchor: middle;
-  font-weight: 700;
-}
-
-.threat-badge {
-  margin-top: 1.5rem;
-  padding: 6px 16px;
-  border-radius: 20px;
-  font-family: var(--font-mono);
-  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 2px;
+  color: var(--text-secondary);
+}
+
+.score-value-container {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.score-number {
+  font-family: var(--font-cyber);
+  font-size: 3.5rem;
+  line-height: 1;
+}
+
+.score-total {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  font-size: 1.2rem;
+  opacity: 0.5;
+}
+
+.progress-container {
+  width: 100%;
+  height: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.progress-bar-bg {
+  width: 100%;
+  height: 100%;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  border-radius: 6px;
+  transition: width 1s ease-out;
+}
+
+.threat-badge-horizontal {
+  align-self: flex-start;
+  padding: 8px 20px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  font-size: 0.9rem;
+}
+
+/* Updated Grid */
+.dashboard-grid-full {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  width: 100%;
 }
 
 /* Sub Grid */
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 1.5rem;
 }
 

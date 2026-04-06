@@ -239,7 +239,7 @@ async function runAiAnalysis(data) {
         - Google Safe Browsing Flagged: ${data.phishingIndicators.intel.googleFlagged ? 'YES (MALICIOUS)' : 'No'}
         - VirusTotal Flagged Engines: ${data.phishingIndicators.intel.vtStatus ? data.phishingIndicators.intel.vtStatus.malicious + ' engines' : 'Unknown'}
 
-        As a forensic cybersecurity expert, analyze if this is a "Deceptive Intent" site or a "Technical Error." Look specifically for Social Engineering tactics (Impersonation + Urgency + Obfuscation).
+        As Gemini Forensic AI, a world-class specialized cybersecurity expert, analyze if this is a "Deceptive Intent" phishing campaign or a "Technical Configuration Error." Focus heavily on Social Engineering signals (Impersonation, Artificial Urgency, and Obfuscation).
         
         Provide your analysis in JSON format with exactly two fields:
         1. "verdict": One of ["Safe", "Suspicious", "Malicious"]

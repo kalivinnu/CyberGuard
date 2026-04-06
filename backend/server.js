@@ -167,6 +167,20 @@ async function checkSsl(hostname) {
   });
 }
 
+// --- 4-STAR LOGIC: SHANNON ENTROPY (detecting DGA/Random domains) ---
+function calculateEntropy(str) {
+  const len = str.length;
+  if (!len) return 0;
+  const counts = {};
+  for (const char of str) counts[char] = (counts[char] || 0) + 1;
+  let entropy = 0;
+  for (const char in counts) {
+    const p = counts[char] / len;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+}
+
 function parseDomainAge(whoisData) {
   if (!whoisData) return { ageDays: 0, text: 'Unknown' };
   
@@ -204,10 +218,6 @@ async function runAiAnalysis(data) {
       const model = genAI.getGenerativeModel({ model: modelName });
       
       const prompt = `
-        As a Lead Cybersecurity Analyst, analyze the following website data for potential PHISHING, SCAMS, or technical vulnerabilities.
-        
-        TECHNICAL TRUST SCORE: ${data.trustScore}% (A lower score indicates higher risk based on rule-based analysis)
-        
         URL: ${data.url}
         SSL Valid: ${data.isSslValid}
         SSL Issuer: ${data.sslIssuer}
@@ -216,15 +226,11 @@ async function runAiAnalysis(data) {
         HTTP Status Code: ${data.statusCode}
         Server Location: ${data.serverLocation}
         
-        PHISHING HEURISTICS:
-        - Is Punycode/Homograph: ${data.phishingIndicators.isPunycode}
-        - Shortened Link Detected: ${data.phishingIndicators.isShortened}
-        - Suspicious TLD: ${data.phishingIndicators.hasSuspiciousTld}
-        - Deep Subdomains: ${data.phishingIndicators.hasDeepSubdomains}
-        - Suspicious Keywords: ${data.phishingIndicators.isSuspiciousUrl}
-        
-        ACCURACY PRO INDICATORS:
+        FORENSIC BEHAVIORAL ANALYST (4-STAR LOGIC):
         - Brand Impersonation Suspected: ${data.phishingIndicators.brandImpersonation?.brand || 'None'} (Fuzzy Distance: ${data.phishingIndicators.brandImpersonation?.distance || 'N/A'})
+        - SSL/Brand Mismatch: ${data.phishingIndicators.isSslMismatch ? 'YES (CRITICAL)' : 'No'}
+        - Domain Entropy (Randomness): ${data.phishingIndicators.entropy.toFixed(2)} / 5.0 (High > 4.2)
+        - Suspicious Path Detected: ${data.phishingIndicators.isSuspiciousPath ? 'YES' : 'No'}
         - Redirects Found: ${data.phishingIndicators.redirectCount}
         - Final Destination: ${data.phishingIndicators.finalUrl}
         - Sensitive Forms Found (Login/Password): ${data.phishingIndicators.hasSensitivedata}
@@ -233,7 +239,7 @@ async function runAiAnalysis(data) {
         - Google Safe Browsing Flagged: ${data.phishingIndicators.intel.googleFlagged ? 'YES (MALICIOUS)' : 'No'}
         - VirusTotal Flagged Engines: ${data.phishingIndicators.intel.vtStatus ? data.phishingIndicators.intel.vtStatus.malicious + ' engines' : 'Unknown'}
 
-        Analyze the URL structure and technical indicators for deceptive patterns. You must provide a verdict that is consistent with the Technical Trust Score unless you have a strong, justifiable reason for a different conclusion.
+        As a forensic cybersecurity expert, analyze if this is a "Deceptive Intent" site or a "Technical Error." Look specifically for Social Engineering tactics (Impersonation + Urgency + Obfuscation).
         
         Provide your analysis in JSON format with exactly two fields:
         1. "verdict": One of ["Safe", "Suspicious", "Malicious"]
@@ -290,6 +296,12 @@ app.post('/api/analyze', async (req, res) => {
   let serverIp = 'Unknown';
   let serverLocation = 'Unknown';
 
+  // --- 4-STAR LOGIC: BEHAVIORAL PROFILING ---
+  const domainEntropy = calculateEntropy(hostname);
+  const path = parsedUrl.pathname.toLowerCase();
+  const phishingPaths = ['/verification', '/login', '/signin', '/secure', '/auth', '/update', '/account', '/confirm', '/portal', '/webapps'];
+  const isSuspiciousPath = phishingPaths.some(p => path.includes(p)) && (path.length > 6 || path.includes('.'));
+  
   // --- F. Suspicious Keyword & Shortener Detection & Phishing Heuristics ---
   const suspiciousKeywords = ['login', 'free', 'verify', 'bank', 'update', 'secure', 'account', 'signin', 'auth', 'payment', 'confirm', 'password', 'urgent', 'offer', 'redirect'];
   const isSuspiciousUrl = suspiciousKeywords.some(keyword => url.toLowerCase().includes(keyword));
@@ -425,6 +437,15 @@ app.post('/api/analyze', async (req, res) => {
     finalScore -= 2; // Dangerous: Password form on suspicious site
   }
 
+  // --- 4-STAR BEHAVIORAL LOGIC ---
+  if (domainEntropy > 4.2) finalScore -= 2; // Severe: Random strings (DGA) used by botnets/kits
+  if (isSuspiciousPath && (brandImpersonation && !brandImpersonation.isBrand)) finalScore -= 2; // Critical: Phishing Path on Lookalike
+  
+  // SSL-Brand Mismatch (Detecting low-assurance SSL on High-Trust Brand impersonations)
+  const isSslMismatch = (brandImpersonation && !brandImpersonation.isBrand) && 
+                       (sslIssuer.includes('Let\'s Encrypt') || sslIssuer.includes('Cloudflare') || sslIssuer.includes('Unknown') || sslIssuer === 'N/A');
+  if (isSslMismatch) finalScore -= 2;
+
   // --- INDUSTRIAL INTELLIGENCE SCORING ---
   const intelFlagged = googleFlagged === true || (vtStatus && vtStatus.malicious > 2);
   if (intelFlagged) {
@@ -469,6 +490,9 @@ app.post('/api/analyze', async (req, res) => {
         redirectCount,
         finalUrl,
         hasSensitivedata,
+        entropy: domainEntropy,
+        isSuspiciousPath,
+        isSslMismatch,
         intel: {
           googleFlagged,
           vtStatus
@@ -499,8 +523,11 @@ app.post('/api/analyze', async (req, res) => {
         { name: 'Untrusted/High-Risk TLD', detected: hasSuspiciousTld, explanation: 'Risk Domain Extension - The site uses a cheap or untrusted domain type (.xyz, .tk) often used by scammers.' },
         { name: 'Invalid SSL Certificate', detected: !isSslValid, explanation: 'SSL Certificate - A valid certificate ensures your connection is encrypted and the site is who it says it is.' },
         { name: 'Brand Impersonation', detected: (brandImpersonation && !brandImpersonation.isBrand), explanation: 'Lookalike Brand - This site appears to be impersonating a well-known brand (e.g., Google or PayPal).' },
+        { name: 'SSL-Brand Discrepancy', detected: isSslMismatch, explanation: 'Pro-Grade Anomaly - Found a Free/Low-Trust SSL certificate on a site that mimics a high-trust global brand.' },
         { name: 'Hidden Redirects', detected: isHighRiskRedirect, explanation: 'Redirect Chain - The URL bounced through multiple hidden addresses before arriving at the final page.' },
         { name: 'Insecure Login Form', detected: hasSensitivedata && (!isHttps || (brandImpersonation && !brandImpersonation.isBrand)), explanation: 'Critical Leak - Found a login or password form on a suspicious or unencrypted website.' },
+        { name: 'DGA / Random Domain', detected: domainEntropy > 4.2, explanation: 'Behavioral Anomaly - The web address uses a complex, random-looking string typical of botnets or phishing kits.' },
+        { name: 'Phishing Kit Fingerprint', detected: isSuspiciousPath && (brandImpersonation && !brandImpersonation.isBrand), explanation: 'Deceptive Path - Found a highly-specific phishing folder structure (like /verification/) on a lookalike domain.' },
         { name: 'Blacklisted (Google Intelligence)', detected: googleFlagged === true, explanation: 'Global Intelligence - This URL has been confirmed as malicious by the Google Safe Browsing database.' },
         { name: 'Threat Engine Detection (VT)', detected: (vtStatus && vtStatus.malicious > 0), explanation: 'Antivirus Consensus - Multiple security engines on VirusTotal have flagged this site as dangerous.' }
       ],

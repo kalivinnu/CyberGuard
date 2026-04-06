@@ -174,6 +174,28 @@ const Dashboard = ({ data, url, onReset }) => {
             </div>
           </div>
 
+          {/* Forensic Diagnostics Metric */}
+          <div className="glass-panel metric-card forensic-card">
+            <div className="metric-header" style={{ color: 'var(--accent-crimson)' }}>
+              <ShieldAlert className="metric-icon" size={20} />
+              Forensic Diagnostics
+            </div>
+            <div className="metric-content">
+              <div className="metric-item">
+                <span className="item-label">Domain Entropy</span>
+                <span className={`item-value ${data.phishingIndicators?.entropy > 4.2 ? 'critical' : 'secure'}`}>
+                  {data.phishingIndicators?.entropy ? data.phishingIndicators.entropy.toFixed(2) : '0.00'} / 5.0
+                </span>
+              </div>
+              <div className="metric-item">
+                <span className="item-label">Identity Match</span>
+                <span className={`item-value ${data.phishingIndicators?.isSslMismatch ? 'critical' : 'secure'}`}>
+                  {data.phishingIndicators?.isSslMismatch ? 'Mismatch Found' : 'Verified Issuer'}
+                </span>
+              </div>
+            </div>
+          </div>
+
           {/* AI Neural Analysis Metric */}
           <div className="glass-panel metric-card ai-card">
             <div className="metric-header">

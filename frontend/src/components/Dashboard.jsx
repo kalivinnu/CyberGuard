@@ -183,9 +183,9 @@ const Dashboard = ({ data, url, onReset }) => {
             </div>
             <div className="metric-content">
               <div className="metric-item">
-                <span className="item-label">Domain Entropy</span>
-                <span className={`item-value ${data.phishingIndicators?.entropy > 4.2 ? 'critical' : 'secure'}`}>
-                  {data.phishingIndicators?.entropy ? data.phishingIndicators.entropy.toFixed(2) : '0.00'} / 5.0
+                <span className="item-label">Server IP Address</span>
+                <span className="item-value" style={{ color: 'var(--accent-blue)' }}>
+                  {data.serverInfo?.ip || 'N/A'}
                 </span>
               </div>
               <div className="metric-item">

@@ -143,14 +143,32 @@ const Dashboard = ({ data, url, onReset }) => {
                 <span className="item-label">Location</span>
                 <span className="item-value">{data.serverInfo.location}</span>
               </div>
-              <div className="metric-item">
-                <span className="item-label">IP Address</span>
-                <span className="item-value">{data.serverInfo.ip}</span>
-              </div>
               <div className="metric-item" style={{ marginTop: '4px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.05)'}}>
                 <span className="item-label">Status Code</span>
                 <span className={`item-value ${data.serverInfo.statusCode === 200 ? 'secure' : data.serverInfo.statusCode >= 400 ? 'critical' : 'warning'}`}>
                   HTTP {data.serverInfo.statusCode}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Global Intelligence Metric */}
+          <div className="glass-panel metric-card intel-card">
+            <div className="metric-header" style={{ color: 'var(--accent-blue)' }}>
+              <Zap className="metric-icon" size={20} />
+              Global Intelligence
+            </div>
+            <div className="metric-content">
+              <div className="metric-item">
+                <span className="item-label">Google Safe Browsing</span>
+                <span className={`item-value ${data.phishingIndicators?.intel?.googleFlagged === true ? 'critical' : data.phishingIndicators?.intel?.googleFlagged === null ? 'warning' : 'secure'}`}>
+                  {data.phishingIndicators?.intel?.googleFlagged === true ? 'BLACKLISTED' : data.phishingIndicators?.intel?.googleFlagged === null ? 'Inactive' : 'Clean'}
+                </span>
+              </div>
+              <div className="metric-item">
+                <span className="item-label">VirusTotal Consensus</span>
+                <span className={`item-value ${data.phishingIndicators?.intel?.vtStatus?.malicious > 0 ? 'critical' : data.phishingIndicators?.intel?.vtStatus === null ? 'warning' : 'secure'}`}>
+                  {data.phishingIndicators?.intel?.vtStatus ? `${data.phishingIndicators.intel.vtStatus.malicious} Engines Flagged` : 'Inactive'}
                 </span>
               </div>
             </div>

@@ -96,6 +96,43 @@ function lookupWhois(domain) {
   });
 }
 
+// --- INDUSTRIAL INTELLIGENCE: GOOGLE SAFE BROWSING ---
+async function checkSafeBrowsing(url) {
+  if (!process.env.SAFE_BROWSING_API_KEY || process.env.SAFE_BROWSING_API_KEY === 'PLACEHOLDER') return null;
+  try {
+    const res = await axios.post(`https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${process.env.SAFE_BROWSING_API_KEY}`, {
+      client: { clientId: "CyberGuard", clientVersion: "1.0" },
+      threatInfo: {
+        threatTypes: ["MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE", "POTENTIALLY_HARMFUL_APPLICATION"],
+        platformTypes: ["ANY_PLATFORM"],
+        threatEntryTypes: ["URL"],
+        threatEntries: [{ url }]
+      }
+    });
+    return res.data.matches && res.data.matches.length > 0;
+  } catch (err) {
+    console.error("Safe Browsing Error:", err.message);
+    return null;
+  }
+}
+
+// --- INDUSTRIAL INTELLIGENCE: VIRUSTOTAL ---
+async function checkVirusTotal(url) {
+  if (!process.env.VIRUS_TOTAL_API_KEY || process.env.VIRUS_TOTAL_API_KEY === 'PLACEHOLDER') return null;
+  try {
+    // VirusTotal base64 (no padding)
+    const encodedUrl = Buffer.from(url).toString('base64').replace(/=/g, '');
+    const res = await axios.get(`https://www.virustotal.com/api/v3/urls/${encodedUrl}`, {
+      headers: { 'x-apikey': process.env.VIRUS_TOTAL_API_KEY }
+    });
+    const stats = res.data.data.attributes.last_analysis_stats;
+    return { malicious: stats.malicious, suspicious: stats.suspicious };
+  } catch (err) {
+    console.error("VirusTotal Error:", err.message);
+    return null;
+  }
+}
+
 function parseDomainAge(whoisData) {
   if (!whoisData) return { ageDays: 0, text: 'Unknown' };
   
@@ -157,6 +194,10 @@ async function runAiAnalysis(data) {
         - Redirects Found: ${data.phishingIndicators.redirectCount}
         - Final Destination: ${data.phishingIndicators.finalUrl}
         - Sensitive Forms Found (Login/Password): ${data.phishingIndicators.hasSensitivedata}
+        
+        GLOBAL INTELLIGENCE (INDUSTRIAL GRADE):
+        - Google Safe Browsing Flagged: ${data.phishingIndicators.intel.googleFlagged ? 'YES (MALICIOUS)' : 'No'}
+        - VirusTotal Flagged Engines: ${data.phishingIndicators.intel.vtStatus ? data.phishingIndicators.intel.vtStatus.malicious + ' engines' : 'Unknown'}
 
         Analyze the URL structure and technical indicators for deceptive patterns. You must provide a verdict that is consistent with the Technical Trust Score unless you have a strong, justifiable reason for a different conclusion.
         
@@ -338,17 +379,73 @@ app.post('/api/analyze', async (req, res) => {
     }
   }
 
-  // --- C. WHOIS Domain Age ---
   const baseDomain = getBaseDomain(hostname);
   const isIp = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(baseDomain);
-  
+
+  // --- INDUSTRIAL PARALLEL ANALYSIS ---
   let whoisText = '';
-  if (!isIp) {
-    whoisText = await lookupWhois(baseDomain);
+  let googleFlagged = null;
+  let vtStatus = null;
+  let headersRes = null;
+
+  try {
+    const [wData, gData, vData, hData] = await Promise.all([
+       isIp ? null : lookupWhois(baseDomain),
+       checkSafeBrowsing(url),
+       checkVirusTotal(url),
+       axios.get(url, {
+         headers: {
+           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+         },
+         validateStatus: () => true, 
+         timeout: 10000,
+         maxRedirects: 5,
+         httpsAgent: new https.Agent({ rejectUnauthorized: false })
+       })
+    ]);
+    
+    whoisText = wData;
+    googleFlagged = gData;
+    vtStatus = vData;
+    headersRes = hData;
+  } catch (err) {
+    console.warn(`Parallel check failed for ${hostname}:`, err.message);
   }
-  
+
   const domainAgeResult = parseDomainAge(whoisText);
   const isOldDomain = domainAgeResult.ageDays > 180; // 6 months
+
+  // Capture final URL and redirect depth (from headersRes)
+  let redirectCount = 0;
+  let finalUrl = url;
+  let hasSensitivedata = false;
+  
+  if (headersRes) {
+    finalUrl = headersRes.request?.res?.responseUrl || url;
+    if (headersRes.request?._redirectable?._redirects) {
+      redirectCount = headersRes.request._redirectable._redirects.length;
+    }
+    statusCode = headersRes.status;
+    const body = headersRes.data;
+    if (typeof body === 'string') {
+       const lowerBody = body.toLowerCase();
+       if (lowerBody.includes('type="password"') || lowerBody.includes('type=\'password\'') || 
+          (lowerBody.includes('id="login"') && lowerBody.includes('form'))) {
+         hasSensitivedata = true;
+       }
+    }
+    
+    // Check Security Headers: CSP, X-Frame-Options, HSTS
+    const headers = headersRes.headers;
+    const hasCsp = !!headers['content-security-policy'];
+    const hasXFrame = !!headers['x-frame-options'];
+    const hasHsts = !!headers['strict-transport-security'];
+    
+    if (hasCsp && hasXFrame && hasHsts) {
+      hasMissingHeaders = false; // All present
+    }
+  }
 
   // --- ACCURACY PRO HEURISTICS ---
   const brandImpersonation = checkTyposquatting(hostname);
@@ -372,10 +469,17 @@ app.post('/api/analyze', async (req, res) => {
     finalScore -= 2; // Dangerous: Password form on suspicious site
   }
 
+  // --- INDUSTRIAL INTELLIGENCE SCORING ---
+  const intelFlagged = googleFlagged === true || (vtStatus && vtStatus.malicious > 2);
+  if (intelFlagged) {
+    finalScore = -10; // Forced to zero trust
+  }
+
   // Max score is +3, Min is -5. Convert this to a 0-100 gauge scale
-  // Mapping: -5=0, -3=10, -2=20, -1=30, 0=50, 1=70, 2=85, 3=100
+  // Mapping: -10=0 Trust, -5=0, -3=10, -2=20, -1=30, 0=50, 1=70, 2=85, 3=100
   let normalizedScore = 50;
-  if (finalScore >= 3) normalizedScore = 100;
+  if (finalScore <= -10) normalizedScore = 0;
+  else if (finalScore >= 3) normalizedScore = 100;
   else if (finalScore === 2) normalizedScore = 85;
   else if (finalScore === 1) normalizedScore = 70;
   else if (finalScore === 0) normalizedScore = 50;
@@ -385,7 +489,8 @@ app.post('/api/analyze', async (req, res) => {
   else normalizedScore = 5;
 
   let threatLevel = 'Safe';
-  if (normalizedScore < 40) threatLevel = 'Critical / High Risk (Phishing Suspected)';
+  if (normalizedScore < 20) threatLevel = 'High Risk / Malicious (Threat Intelligence Flagged)';
+  else if (normalizedScore < 40) threatLevel = 'Critical / High Risk (Phishing Suspected)';
   else if (normalizedScore < 75) threatLevel = 'Warning / Medium Risk';
 
   // --- 4. NEURAL AI ANALYSIS ---
@@ -407,7 +512,11 @@ app.post('/api/analyze', async (req, res) => {
         brandImpersonation,
         redirectCount,
         finalUrl,
-        hasSensitivedata
+        hasSensitivedata,
+        intel: {
+          googleFlagged,
+          vtStatus
+        }
     }
   });
 
@@ -435,7 +544,9 @@ app.post('/api/analyze', async (req, res) => {
         { name: 'Invalid SSL Certificate', detected: !isSslValid, explanation: 'SSL Certificate - A valid certificate ensures your connection is encrypted and the site is who it says it is.' },
         { name: 'Brand Impersonation', detected: (brandImpersonation && !brandImpersonation.isBrand), explanation: 'Lookalike Brand - This site appears to be impersonating a well-known brand (e.g., Google or PayPal).' },
         { name: 'Hidden Redirects', detected: isHighRiskRedirect, explanation: 'Redirect Chain - The URL bounced through multiple hidden addresses before arriving at the final page.' },
-        { name: 'Insecure Login Form', detected: hasSensitivedata && (!isHttps || (brandImpersonation && !brandImpersonation.isBrand)), explanation: 'Critical Leak - Found a login or password form on a suspicious or unencrypted website.' }
+        { name: 'Insecure Login Form', detected: hasSensitivedata && (!isHttps || (brandImpersonation && !brandImpersonation.isBrand)), explanation: 'Critical Leak - Found a login or password form on a suspicious or unencrypted website.' },
+        { name: 'Blacklisted (Google Intelligence)', detected: googleFlagged === true, explanation: 'Global Intelligence - This URL has been confirmed as malicious by the Google Safe Browsing database.' },
+        { name: 'Threat Engine Detection (VT)', detected: (vtStatus && vtStatus.malicious > 0), explanation: 'Antivirus Consensus - Multiple security engines on VirusTotal have flagged this site as dangerous.' }
       ],
       serverInfo: {
         location: serverLocation || 'Unknown API Error',

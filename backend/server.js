@@ -49,6 +49,43 @@ function getBaseDomain(hostname) {
   return parts.slice(-2).join('.');
 }
 
+// --- ACCURACY PRO: TYPOSQUATTING DETECTION ---
+function levenshtein(a, b) {
+  const tmp = [];
+  for (let i = 0; i <= a.length; i++) { tmp[i] = [i]; }
+  for (let j = 0; j <= b.length; j++) { tmp[0][j] = j; }
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      tmp[i][j] = Math.min(
+        tmp[i - 1][j] + 1,
+        tmp[i][j - 1] + 1,
+        tmp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+  }
+  return tmp[a.length][b.length];
+}
+
+const TOP_BRANDS = [
+    'google', 'facebook', 'instagram', 'paypal', 'amazon', 'microsoft', 'apple', 'netflix', 
+    'twitter', 'linkedin', 'spotify', 'roblox', 'whatsapp', 'telegram', 'bankofamerica', 
+    'wellsfargo', 'chase', 'binance', 'coinbase', 'kraken', 'github', 'dropbox', 'icloud', 'adobe'
+];
+
+function checkTyposquatting(hostname) {
+  const name = hostname.split('.')[0].toLowerCase();
+  if (TOP_BRANDS.includes(name)) return { isBrand: true, distance: 0, brand: name };
+  
+  for (const brand of TOP_BRANDS) {
+    const distance = levenshtein(name, brand);
+    // Threshold depends on length; distance 1 or 2 for common names
+    if (distance > 0 && distance <= 2 && name.length >= 4) {
+      return { isBrand: false, distance, brand };
+    }
+  }
+  return null;
+}
+
 // Promisify WHOIS lookup
 function lookupWhois(domain) {
   return new Promise((resolve) => {
@@ -114,6 +151,12 @@ async function runAiAnalysis(data) {
         - Suspicious TLD: ${data.phishingIndicators.hasSuspiciousTld}
         - Deep Subdomains: ${data.phishingIndicators.hasDeepSubdomains}
         - Suspicious Keywords: ${data.phishingIndicators.isSuspiciousUrl}
+        
+        ACCURACY PRO INDICATORS:
+        - Brand Impersonation Suspected: ${data.phishingIndicators.brandImpersonation?.brand || 'None'} (Fuzzy Distance: ${data.phishingIndicators.brandImpersonation?.distance || 'N/A'})
+        - Redirects Found: ${data.phishingIndicators.redirectCount}
+        - Final Destination: ${data.phishingIndicators.finalUrl}
+        - Sensitive Forms Found (Login/Password): ${data.phishingIndicators.hasSensitivedata}
 
         Analyze the URL structure and technical indicators for deceptive patterns. You must provide a verdict that is consistent with the Technical Trust Score unless you have a strong, justifiable reason for a different conclusion.
         
@@ -213,21 +256,40 @@ app.post('/api/analyze', async (req, res) => {
        }
     }).catch(() => {});
 
-    // --- B. SSL & D. Security Headers & E. Status Code ---
+    // --- ACCURACY PRO: REDIRECT & HTML ANALYSIS ---
+    let redirectCount = 0;
+    let finalUrl = url;
+    let hasSensitivedata = false;
+
     const headersRes = await axios.get(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
       },
       validateStatus: () => true, // Don't throw on 404/500
-      timeout: 8000,
-      httpsAgent: new https.Agent({
-        rejectUnauthorized: false // Allow self-signed/expired so we can manually inspect them
-      })
+      timeout: 10000,
+      maxRedirects: 5,
+      httpsAgent: new https.Agent({ rejectUnauthorized: false })
     });
     
+    // Capture final URL and redirect depth
+    finalUrl = headersRes.request.res.responseUrl || url;
+    if (headersRes.request._redirectable && headersRes.request._redirectable._redirects) {
+      redirectCount = headersRes.request._redirectable._redirects.length;
+    }
+
     statusCode = headersRes.status;
     const headers = headersRes.headers;
+    const body = headersRes.data;
+
+    // Detect sensitive forms (passwords, logins)
+    if (typeof body === 'string') {
+       const lowerBody = body.toLowerCase();
+       if (lowerBody.includes('type="password"') || lowerBody.includes('type=\'password\'') || 
+          (lowerBody.includes('id="login"') && lowerBody.includes('form'))) {
+         hasSensitivedata = true;
+       }
+    }
 
     // Check Security Headers: CSP, X-Frame-Options, HSTS
     const hasCsp = !!headers['content-security-policy'];
@@ -288,13 +350,11 @@ app.post('/api/analyze', async (req, res) => {
   const domainAgeResult = parseDomainAge(whoisText);
   const isOldDomain = domainAgeResult.ageDays > 180; // 6 months
 
+  // --- ACCURACY PRO HEURISTICS ---
+  const brandImpersonation = checkTyposquatting(hostname);
+  const isHighRiskRedirect = redirectCount > 2 || (redirectCount > 0 && new URL(finalUrl).hostname !== hostname);
+
   // --- 3. APPLY RISK SCORING SYSTEM ---
-  // Base points mapping directly to user spec:
-  // HTTPS = +1
-  // Valid SSL = +1
-  // Old domain = +1
-  // Missing headers = -1
-  // Suspicious URL = -1
   if (isHttps) finalScore += 1;
   if (isSslValid) finalScore += 1;
   if (isOldDomain) finalScore += 1;
@@ -304,6 +364,13 @@ app.post('/api/analyze', async (req, res) => {
   if (isShortened) finalScore -= 1; // Shortened URLs mask destination
   if (isPunycode) finalScore -= 2; // Homograph attack is critical
   if (hasSuspiciousTld) finalScore -= 1; 
+
+  // Accuracy Pro Deductions
+  if (brandImpersonation && !brandImpersonation.isBrand) finalScore -= 3; // Severe: Looks like a brand but isn't
+  if (isHighRiskRedirect) finalScore -= 1;
+  if (hasSensitivedata && (!isHttps || !isOldDomain || (brandImpersonation && !brandImpersonation.isBrand))) {
+    finalScore -= 2; // Dangerous: Password form on suspicious site
+  }
 
   // Max score is +3, Min is -5. Convert this to a 0-100 gauge scale
   // Mapping: -5=0, -3=10, -2=20, -1=30, 0=50, 1=70, 2=85, 3=100
@@ -336,7 +403,11 @@ app.post('/api/analyze', async (req, res) => {
         isShortened,
         hasSuspiciousTld,
         hasDeepSubdomains,
-        isSuspiciousUrl
+        isSuspiciousUrl,
+        brandImpersonation,
+        redirectCount,
+        finalUrl,
+        hasSensitivedata
     }
   });
 
@@ -361,7 +432,10 @@ app.post('/api/analyze', async (req, res) => {
         { name: 'Shortened Link Detected', detected: isShortened, explanation: 'Shortened URL - The link is hidden behind a shortening service, making its true destination unknown.' },
         { name: 'Punycode/Homograph Attack', detected: isPunycode, explanation: 'Lookalike Link - The web address uses special characters to "look like" a famous site while actually being fake.' },
         { name: 'Untrusted/High-Risk TLD', detected: hasSuspiciousTld, explanation: 'Risk Domain Extension - The site uses a cheap or untrusted domain type (.xyz, .tk) often used by scammers.' },
-        { name: 'Invalid SSL Certificate', detected: !isSslValid, explanation: 'SSL Certificate - A valid certificate ensures your connection is encrypted and the site is who it says it is.' }
+        { name: 'Invalid SSL Certificate', detected: !isSslValid, explanation: 'SSL Certificate - A valid certificate ensures your connection is encrypted and the site is who it says it is.' },
+        { name: 'Brand Impersonation', detected: (brandImpersonation && !brandImpersonation.isBrand), explanation: 'Lookalike Brand - This site appears to be impersonating a well-known brand (e.g., Google or PayPal).' },
+        { name: 'Hidden Redirects', detected: isHighRiskRedirect, explanation: 'Redirect Chain - The URL bounced through multiple hidden addresses before arriving at the final page.' },
+        { name: 'Insecure Login Form', detected: hasSensitivedata && (!isHttps || (brandImpersonation && !brandImpersonation.isBrand)), explanation: 'Critical Leak - Found a login or password form on a suspicious or unencrypted website.' }
       ],
       serverInfo: {
         location: serverLocation || 'Unknown API Error',

@@ -40,8 +40,25 @@ const Dashboard = ({ data, url, onReset }) => {
     <div className="dashboard-container fade-in">
       <div className="dashboard-header">
         <div className="target-info">
-          <h2>Analysis Complete</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h2>Analysis Complete</h2>
+            <span style={{ 
+              fontSize: '0.65rem', 
+              background: 'linear-gradient(90deg, #00f0ff, #aa3bff)', 
+              color: 'white', 
+              padding: '2px 8px', 
+              borderRadius: '10px', 
+              fontWeight: '800',
+              textTransform: 'uppercase',
+              letterSpacing: '1px'
+            }}>PRO ACTIVE</span>
+          </div>
           <p>Target: <strong>{url}</strong></p>
+          {data.phishingIndicators?.finalUrl && data.phishingIndicators.finalUrl !== url && (
+            <p style={{ fontSize: '0.75rem', marginTop: '2px', color: 'var(--accent-blue)' }}>
+              ↳ Ends at: <strong>{data.phishingIndicators.finalUrl}</strong>
+            </p>
+          )}
         </div>
         <button onClick={onReset} className="close-btn">NEW SCAN</button>
       </div>

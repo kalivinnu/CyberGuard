@@ -133,6 +133,40 @@ async function checkVirusTotal(url) {
   }
 }
 
+// --- SSL & TLS INSPECTOR ---
+async function checkSsl(hostname) {
+  const tls = require('tls');
+  return new Promise((resolve) => {
+    try {
+      const socket = tls.connect({
+        host: hostname,
+        port: 443,
+        servername: hostname,
+        rejectUnauthorized: false
+      }, () => {
+        const cert = socket.getPeerCertificate(true);
+        let sslData = { isSslValid: false, issuer: 'N/A' };
+        if (cert && Object.keys(cert).length > 0) {
+          sslData.issuer = cert.issuer ? (cert.issuer.O || cert.issuer.CN) : 'Unknown';
+          const validTo = new Date(cert.valid_to);
+          const validFrom = new Date(cert.valid_from);
+          const now = new Date();
+          if (now >= validFrom && now <= validTo) {
+            const identityErr = tls.checkServerIdentity(hostname, cert);
+            if (!identityErr) sslData.isSslValid = true;
+          }
+        }
+        socket.end();
+        resolve(sslData);
+      });
+      socket.on('error', () => resolve({ isSslValid: false, issuer: 'Connection Failed' }));
+      setTimeout(() => { socket.destroy(); resolve({ isSslValid: false, issuer: 'Timeout' }); }, 5000);
+    } catch (err) {
+      resolve({ isSslValid: false, issuer: 'N/A' });
+    }
+  });
+}
+
 function parseDomainAge(whoisData) {
   if (!whoisData) return { ageDays: 0, text: 'Unknown' };
   
@@ -289,108 +323,24 @@ app.post('/api/analyze', async (req, res) => {
       console.warn(`[Blocked SSRF Attempt]: Target ${hostname} resolved to ${range} IP ${serverIp}`);
       return res.status(403).json({ error: 'Access Denied: Scanning internal/private network resources is prohibited.' });
     }
-    
-    // Non-blocking fetch for geolocation
-    axios.get(`http://ip-api.com/json/${serverIp}`).then(geo => {
-       if (geo.data && geo.data.status === 'success') {
-         serverLocation = `${geo.data.city}, ${geo.data.countryCode}`;
-       }
-    }).catch(() => {});
-
-    // --- ACCURACY PRO: REDIRECT & HTML ANALYSIS ---
-    let redirectCount = 0;
-    let finalUrl = url;
-    let hasSensitivedata = false;
-
-    const headersRes = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
-      },
-      validateStatus: () => true, // Don't throw on 404/500
-      timeout: 10000,
-      maxRedirects: 5,
-      httpsAgent: new https.Agent({ rejectUnauthorized: false })
-    });
-    
-    // Capture final URL and redirect depth
-    finalUrl = headersRes.request.res.responseUrl || url;
-    if (headersRes.request._redirectable && headersRes.request._redirectable._redirects) {
-      redirectCount = headersRes.request._redirectable._redirects.length;
-    }
-
-    statusCode = headersRes.status;
-    const headers = headersRes.headers;
-    const body = headersRes.data;
-
-    // Detect sensitive forms (passwords, logins)
-    if (typeof body === 'string') {
-       const lowerBody = body.toLowerCase();
-       if (lowerBody.includes('type="password"') || lowerBody.includes('type=\'password\'') || 
-          (lowerBody.includes('id="login"') && lowerBody.includes('form'))) {
-         hasSensitivedata = true;
-       }
-    }
-
-    // Check Security Headers: CSP, X-Frame-Options, HSTS
-    const hasCsp = !!headers['content-security-policy'];
-    const hasXFrame = !!headers['x-frame-options'];
-    const hasHsts = !!headers['strict-transport-security'];
-    
-    if (hasCsp && hasXFrame && hasHsts) {
-      hasMissingHeaders = false; // All present
-    }
   } catch (err) {
-    console.warn(`Connection logic bypassed for ${hostname}:`, err.message);
-    statusCode = 'Connection Failed';
-  }
-
-  // --- SSL Inspection (Native TLS) ---
-  if (isHttps) {
-    const tls = require('tls');
-    try {
-      await new Promise((resolve) => {
-        const socket = tls.connect({
-          host: hostname,
-          port: 443,
-          servername: hostname,
-          rejectUnauthorized: false
-        }, () => {
-          const cert = socket.getPeerCertificate(true);
-          if (cert && Object.keys(cert).length > 0) {
-            sslIssuer = cert.issuer ? cert.issuer.O || cert.issuer.CN : 'Unknown';
-            const validTo = new Date(cert.valid_to);
-            const validFrom = new Date(cert.valid_from);
-            const now = new Date();
-            
-            if (now >= validFrom && now <= validTo) {
-               const identityErr = tls.checkServerIdentity(hostname, cert);
-               if (!identityErr) isSslValid = true;
-            }
-          }
-          socket.end();
-          resolve();
-        });
-        socket.on('error', () => resolve());
-        setTimeout(() => { socket.destroy(); resolve(); }, 5000); // 5s timeout
-      });
-    } catch (err) {
-      console.warn(`SSL Socket Check Failed for ${hostname}`);
-    }
+    console.warn(`DNS pre-check failed for ${hostname}`);
   }
 
   const baseDomain = getBaseDomain(hostname);
   const isIp = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(baseDomain);
 
-  // --- INDUSTRIAL PARALLEL ANALYSIS ---
+  // --- INDUSTRIAL PARALLEL ANALYSIS (OPTIMIZED) ---
   let whoisText = '';
   let googleFlagged = null;
   let vtStatus = null;
   let headersRes = null;
+  let sslData = { isSslValid: false, issuer: 'N/A' };
+  let geoData = { city: 'Unknown', countryCode: '??' };
 
   try {
-    const [wData, gData, vData, hData] = await Promise.all([
-       isIp ? null : lookupWhois(baseDomain),
+    const results = await Promise.allSettled([
+       isIp ? Promise.resolve(null) : lookupWhois(baseDomain),
        checkSafeBrowsing(url),
        checkVirusTotal(url),
        axios.get(url, {
@@ -402,21 +352,31 @@ app.post('/api/analyze', async (req, res) => {
          timeout: 10000,
          maxRedirects: 5,
          httpsAgent: new https.Agent({ rejectUnauthorized: false })
-       })
+       }),
+       checkSsl(hostname),
+       axios.get(`http://ip-api.com/json/${serverIp}`).catch(() => ({ data: null }))
     ]);
     
-    whoisText = wData;
-    googleFlagged = gData;
-    vtStatus = vData;
-    headersRes = hData;
+    whoisText = results[0].status === 'fulfilled' ? results[0].value : '';
+    googleFlagged = results[1].status === 'fulfilled' ? results[1].value : null;
+    vtStatus = results[2].status === 'fulfilled' ? results[2].value : null;
+    headersRes = results[3].status === 'fulfilled' ? results[3].value : null;
+    if (results[4].status === 'fulfilled' && results[4].value) sslData = results[4].value;
+    if (results[5].status === 'fulfilled' && results[5].value?.data) {
+       geoData = { city: results[5].value.data.city, countryCode: results[5].value.data.countryCode };
+    }
   } catch (err) {
-    console.warn(`Parallel check failed for ${hostname}:`, err.message);
+    console.warn(`Fatal error in parallel pipeline:`, err.message);
   }
 
-  const domainAgeResult = parseDomainAge(whoisText);
-  const isOldDomain = domainAgeResult.ageDays > 180; // 6 months
+  isSslValid = sslData.isSslValid;
+  sslIssuer = sslData.issuer;
+  serverLocation = `${geoData.city}, ${geoData.countryCode}`;
 
-  // Capture final URL and redirect depth (from headersRes)
+  const domainAgeResult = parseDomainAge(whoisText);
+  const isOldDomain = domainAgeResult.ageDays > 180;
+
+  // Capture final URL and redirect depth
   let redirectCount = 0;
   let finalUrl = url;
   let hasSensitivedata = false;
@@ -436,15 +396,11 @@ app.post('/api/analyze', async (req, res) => {
        }
     }
     
-    // Check Security Headers: CSP, X-Frame-Options, HSTS
     const headers = headersRes.headers;
     const hasCsp = !!headers['content-security-policy'];
     const hasXFrame = !!headers['x-frame-options'];
     const hasHsts = !!headers['strict-transport-security'];
-    
-    if (hasCsp && hasXFrame && hasHsts) {
-      hasMissingHeaders = false; // All present
-    }
+    if (hasCsp && hasXFrame && hasHsts) hasMissingHeaders = false;
   }
 
   // --- ACCURACY PRO HEURISTICS ---

@@ -198,10 +198,11 @@ const Dashboard = ({ data, url, onReset }) => {
           </div>
 
           {/* AI Neural Analysis Metric */}
+          {/* Gemini Forensic AI Metric */}
           <div className="glass-panel metric-card ai-card">
-            <div className="metric-header">
-              <Cpu className="metric-icon ai-icon" size={20} />
-              Neural AI Verdict
+            <div className="metric-header" style={{ color: 'var(--accent-blue)' }}>
+              <Zap className="metric-icon ai-icon" size={20} />
+              Gemini Forensic AI
             </div>
             <div className="metric-content">
               <div className="ai-verdict-container">
